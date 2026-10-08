@@ -15,10 +15,12 @@
     D=M
     @END
     D;JEQ       
+
     @R0
     D=M
     @R2
-    M=D+M      
+    M=D+M       
+
     @R1
     M=M-1       
 
