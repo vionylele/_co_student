@@ -39,24 +39,23 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-    Not(in=instruction[15], out=inAInstr)
-    NOt(in=isAInstr, out isCinstr)
+    // 1. Decode instruksi (A-instruction vs C-instruction)
+    Not(in=instruction[15], out=isAInstr);
+    Not(in=isAInstr, out=isCInstr);
 
-    // First Mux16 & Register A
+    // 2. First Mux16 & Register A
     Mux16(a=instruction, b=outALU, sel=instruction[15], out=inA);
-    Or (a=isAInstr, b=instruction[5], out=loadA)
-
+    Or(a=isAInstr, b=instruction[5], out=loadA);
     ARegister(in=inA, load=loadA, out=outA, out[0..14]=addressM);
 
-    // Second Mux16
+    // 3. Second Mux16
     Mux16(a=outA, b=inM, sel=instruction[12], out=outAM);
 
-    // Register D
+    // 4. Register D
     And(a=isCInstr, b=instruction[4], out=loadD);
     DRegister(in=outALU, load=loadD, out=outD);
 
-    // ALU (Arithmetic Logic Unit)
-    // Control zx, nx, zy, ny, f, no get from instruction[11..6]
+    // 5. ALU (Arithmetic Logic Unit)
     ALU(x=outD, y=outAM, 
         zx=instruction[11], 
         nx=instruction[10], 
@@ -71,25 +70,20 @@ CHIP CPU {
 
     And(a=isCInstr, b=instruction[3], out=writeM);
 
-    // isOut: pos (not zr) and not (ng)
+    // 6. Logika percabangan (Jump Logic)
     Or(a=zr, b=ng, out=zrOrNg);
     Not(in=zrOrNg, out=pos);
 
-    // Check jumps
     And(a=instruction[2], b=ng,  out=jlt); // j1: out < 0
     And(a=instruction[1], b=zr,  out=jeq); // j2: out == 0
     And(a=instruction[0], b=pos, out=jgt); // j3: out > 0
     
-    // Combine jump
     Or(a=jlt, b=jeq, out=jle);
     Or(a=jle, b=jgt, out=jumpCond);
 
-    // jump
     And(a=isCInstr, b=jumpCond, out=loadPC);
-
-    // notjump
     Not(in=loadPC, out=incPC);
 
-    // Program counter
+    // 7. Program Counter
     PC(in=outA, load=loadPC, inc=incPC, reset=reset, out[0..14]=pc);
-}   
+}
