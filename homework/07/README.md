@@ -1,5 +1,3 @@
-# 課程：計算機結構 -- 學生作業與專案
-
 > **Note:** This README was **created by Claude** (an AI assistant by Anthropic) by summarizing the contents of the whole homework repository. Please verify technical details against the original files.
 
 ## Weekly Checklist
