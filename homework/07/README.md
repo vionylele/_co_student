@@ -1,10 +1,6 @@
 > **Note:** This README was **created by Claude** (an AI assistant by Anthropic) by summarizing the contents of the whole homework repository. Please verify technical details against the original files.
 
 ## Weekly Checklist
-
-111410537 李俽嫺 
-[HW7](https://github.com/vionylele/_co_student/tree/main/homework/07)
-
 每週檢驗表格
 
 每週檢驗表格
