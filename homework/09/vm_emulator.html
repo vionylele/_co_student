@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hack VM Emulator</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f7f7f3;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--bd:#d6d6cd;--acc:#2f6fed;--hi:#fff1b0;--wr:#cfeecf;--err:#c0392b}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--fg:#ecece8;--mut:#9a9a94;--card:#1f1f1d;--bd:#3a3a36;--acc:#6b9bff;--hi:#4d4420;--wr:#24422b;--err:#ff7b6b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161615;--fg:#ecece8;--mut:#9a9a94;--card:#1f1f1d;--bd:#3a3a36;--acc:#6b9bff;--hi:#4d4420;--wr:#24422b;--err:#ff7b6b;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px}
+h1{font-size:17px;margin:0 0 8px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+button,select,input{font:inherit;color:inherit;background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:5px 10px}
+button{cursor:pointer}button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px;min-width:0}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 6px}
+textarea{width:100%;height:260px;box-sizing:border-box;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);color:inherit;border:1px solid var(--bd);border-radius:6px;padding:6px;resize:vertical}
+.reg{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.reg div{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:3px 9px}
+.reg b{display:block;font:600 14px ui-monospace,Menlo,Consolas,monospace}.reg small{color:var(--mut)}
+.m{font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto}
+.m div{display:flex;gap:10px;padding:0 4px;white-space:pre}
+.m .a{color:var(--mut);min-width:48px}.m .c{background:var(--hi)}.m .w{background:var(--wr)}.m .v{color:var(--mut);margin-left:auto}
+.m .e{cursor:pointer}
+#st{margin:8px 0 0;min-height:1.2em;color:var(--mut)}#st.er{color:var(--err)}
+details{margin-top:8px}pre{margin:6px 0 0;max-height:220px;overflow:auto;font-size:11px}
+</style></head><body>
+<h1>Hack VM Emulator <small style="font-weight:400;color:var(--mut)">— VM → assembly → CPU</small></h1>
+<div class="bar">
+<select id="pre"></select><label>or <input id="f" type="file" accept=".vm" multiple></label>
+<button class="p" id="ld">Load</button><button id="sp1">Step</button><button id="run">Run</button><button id="stop">Stop</button><button id="rs">Reset</button>
+<select id="spd"><option value="0">Slow</option><option value="1">Medium</option><option value="2" selected>Fast</option><option value="3">Very fast</option><option value="4">Max</option></select>
+</div>
+<div class="reg" id="reg"></div>
+<div class="grid">
+<div class="card"><h2>VM code</h2><textarea id="src" spellcheck="false"></textarea>
+<details><summary>Show generated assembly</summary><pre id="asm"></pre></details></div>
+<div class="card"><h2>ROM (instructions)</h2><div class="m" id="rom"></div></div>
+<div class="card"><h2>Stack</h2><div class="m" id="stk"></div></div>
+<div class="card"><h2>RAM</h2><div class="bar" id="rb"></div><div class="m" id="ram"></div></div>
+</div>
+<p id="st"></p>
+<script>
+const $=id=>document.getElementById(id);
+const PRE={
+"SimpleAdd":{c:"push constant 7\npush constant 8\nadd",i:{}},
+"BasicTest (segments)":{c:"push constant 10\npop local 0\npush constant 21\npush constant 22\npop argument 2\npop argument 1\npush constant 36\npop this 6\npush constant 42\npush constant 45\npop that 5\npop that 2\npush constant 510\npop temp 6\npush local 0\npush that 5\nadd\npush argument 1\nsub\npush this 6\npush this 6\nadd\nsub\npush temp 6\nadd",i:{1:300,2:400,3:3000,4:3010}},
+"Function call":{c:"function Sys.init 0\npush constant 5\npush constant 3\ncall Main.add 2\nlabel END\ngoto END\n\nfunction Main.add 0\npush argument 0\npush argument 1\nadd\nreturn",i:{}},
+"Comparisons":{c:"push constant 20000\nneg\npush constant 20000\nlt\npush constant 5\npush constant 5\neq",i:{}}};
+for(const k in PRE)$('pre').add(new Option(k,k));
+
+// ---------- VM -> Hack assembly ----------
+function split(t){const p=t.split(/^\/\/@file\s+(\S+)\s*$/m);if(p.length==1)return[{name:'Main',text:t}];const r=[];for(let i=1;i<p.length;i+=2)r.push({name:p[i].replace(/\.vm$/,''),text:p[i+1]});return r}
+function translate(files){
+ const out=[],E=(...a)=>out.push(...a),PUSH=['@SP','A=M','M=D','@SP','M=M+1'],POP=['@SP','AM=M-1','D=M'];
+ const BASE={local:'LCL',argument:'ARG',this:'THIS',that:'THAT'},BIN={add:'M=D+M',sub:'M=M-D',and:'M=D&M',or:'M=D|M'};
+ let fn='',file='',n=0,r=0;const rt=new Set(),lab=l=>fn?fn+'$'+l:l;
+ const call=(f,k,c)=>{const L=c+'$ret.'+r++;E('@'+L,'D=A',...PUSH);for(const g of['LCL','ARG','THIS','THAT'])E('@'+g,'D=M',...PUSH);E('@SP','D=M','@'+(k+5),'D=D-A','@ARG','M=D','@SP','D=M','@LCL','M=D','@'+f,'0;JMP','('+L+')')};
+ if(files.some(f=>/^\s*function\s+Sys\.init\b/m.test(f.text))){E('// bootstrap','@256','D=A','@SP','M=D');call('Sys.init',0,'$boot')}
+ for(const f of files){file=f.name;fn='';
+  f.text.split(/\r?\n/).forEach((raw,ln)=>{const t=raw.split('//')[0].trim();if(!t)return;
+   const [c,a,b]=t.split(/\s+/),i=+b,bad=m=>{throw Error(`${f.name}.vm:${ln+1}: ${m}: "${t}"`)};E('// '+t);
+   const fx=s=>s=='temp'?'R'+(5+i):s=='pointer'?(i?'THAT':'THIS'):file+'.'+i;
+   if(c in BIN)E(...POP,'A=A-1',BIN[c]);
+   else if(c=='neg'||c=='not')E('@SP','A=M-1',c=='neg'?'M=-M':'M=!M');
+   else if(c=='eq'){const L='__EQ.'+n++;E(...POP,'A=A-1','D=M-D','M=-1','@'+L,'D;JEQ','@SP','A=M-1','M=0','('+L+')')}
+   else if(c=='gt'||c=='lt'){const L='__CR.'+n++;rt.add(c);E('@'+L,'D=A','@R13','M=D','@__'+c.toUpperCase(),'0;JMP','('+L+')')}
+   else if(c=='push'||c=='pop'){
+    if(!/^(argument|local|static|constant|this|that|pointer|temp)$/.test(a)||!/^\d+$/.test(b))bad('invalid segment or index');
+    if(a=='temp'&&i>7||a=='pointer'&&i>1||a=='constant'&&(c=='pop'||i>32767))bad('index out of range');
+    if(c=='push'){E(...(a=='constant'?['@'+i,'D=A']:a in BASE?(i?['@'+i,'D=A','@'+BASE[a],'A=D+M','D=M']:['@'+BASE[a],'A=M','D=M']):['@'+fx(a),'D=M']),...PUSH)}
+    else if(a in BASE)E('@'+BASE[a],'D=M',...(i?['@'+i,'D=D+A']:[]),'@R13','M=D',...POP,'@R13','A=M','M=D');
+    else E(...POP,'@'+fx(a),'M=D')}
+   else if(c=='label')E('('+lab(a)+')');
+   else if(c=='goto')E('@'+lab(a),'0;JMP');
+   else if(c=='if-goto')E(...POP,'@'+lab(a),'D;JNE');
+   else if(c=='function'){fn=a;E('('+a+')');if(i){E('@SP','A=M');for(let k=0;k<i;k++)E('M=0','A=A+1');E('D=A','@SP','M=D')}}
+   else if(c=='call')call(a,i,fn||'_');
+   else if(c=='return')E('@LCL','D=M','@R13','M=D','@5','A=D-A','D=M','@R14','M=D',...POP,'@ARG','A=M','M=D','@ARG','D=M+1','@SP','M=D',...['THAT','THIS','ARG','LCL'].flatMap(g=>['@R13','AM=M-1','D=M','@'+g,'M=D']),'@R14','A=M','0;JMP');
+   else bad('unknown command')})}
+ E('// end of program','(__END)','@__END','0;JMP');
+ for(const op of rt){const N='__'+op.toUpperCase(),pn=op=='gt'?[N+'.T',N+'.F']:[N+'.F',N+'.T'];
+  E(`(${N})`,'@SP','AM=M-1','D=M','@R14','M=D','@SP','A=M-1','D=M','@'+N+'.X','D;JLT','@R14','D=M','@'+pn[0],'D;JLT','@'+N+'.S','0;JMP',
+   `(${N}.X)`,'@R14','D=M','@'+pn[1],'D;JGE',`(${N}.S)`,'@SP','A=M-1','D=M','@R14','D=D-M','@'+N+'.T','D;'+(op=='gt'?'JGT':'JLT'),
+   `(${N}.F)`,'@SP','A=M-1','M=0','@R13','A=M','0;JMP',`(${N}.T)`,'@SP','A=M-1','M=-1','@R13','A=M','0;JMP')}
+ return out}
+
+// ---------- Hack assembler ----------
+const C={'0':'101010','1':'111111','-1':'111010',D:'001100',A:'110000','!D':'001101','!A':'110001','-D':'001111','-A':'110011','D+1':'011111','A+1':'110111','D-1':'001110','A-1':'110010','D+A':'000010','D-A':'010011','A-D':'000111','D&A':'000000','D|A':'010101'};
+const J={'':0,JGT:1,JEQ:2,JGE:3,JLT:4,JNE:5,JLE:6,JMP:7};
+function assemble(lines){
+ const sym={SP:0,LCL:1,ARG:2,THIS:3,THAT:4,SCREEN:16384,KBD:24576};for(let i=0;i<16;i++)sym['R'+i]=i;
+ const ins=[],vm=[];let cur='';
+ for(const raw of lines){const l=raw.trim();if(!l)continue;if(l.startsWith('//')){cur=l.slice(2).trim();continue}
+  if(l[0]=='('){sym[l.slice(1,-1)]=ins.length;continue}ins.push(l);vm.push(cur)}
+ let nv=16;
+ const rom=ins.map(s=>{if(s[0]=='@'){const v=s.slice(1);if(/^\d+$/.test(v))return+v;if(!(v in sym))sym[v]=nv++;return sym[v]}
+  const [d,r]=s.includes('=')?s.split('='):['',s],[c,j='']=r.split(';');let e=c.replace(/M/g,'A');
+  if(!(e in C)){const m=e.match(/^(.)([+&|])(.)$/);if(m)e=m[3]+m[2]+m[1]}
+  if(!(e in C))throw Error('invalid instruction: '+s);
+  return 0xE000|(c.includes('M')?0x1000:0)|parseInt(C[e],2)<<6|(d.includes('A')?32:0)|(d.includes('D')?16:0)|(d.includes('M')?8:0)|J[j]});
+ return{rom,ins,vm,end:sym.__END}}
+
+// ---------- CPU ----------
+let P=null,ram=new Array(32768).fill(0),A=0,D=0,pc=0,cyc=0,lw=-1,base=256,timer=null,init={};
+const s16=x=>x>32767?x-65536:x;
+function step(){
+ const i=P.rom[pc];lw=-1;
+ if(!(i&0x8000)){A=i;pc++}
+ else{const c=(i>>6)&63;let x=D,y=(i&0x1000)?ram[A&32767]:A;
+  if(c&32)x=0;if(c&16)x=~x&65535;if(c&8)y=0;if(c&4)y=~y&65535;
+  let o=(c&2)?x+y:x&y;if(c&1)o=~o;o&=65535;const s=s16(o),j=i&7,t=(j&1&&s>0)||(j&2&&s==0)||(j&4&&s<0),oa=A;
+  if(i&8){ram[oa&32767]=o;lw=oa&32767}if(i&16)D=o;if(i&32)A=o;pc=t?oa:pc+1}
+ cyc++}
+const halted=()=>!P||pc>=P.rom.length||pc===P.end;
+function reset(){stop();ram.fill(0);ram[0]=256;for(const k in init)ram[k]=init[k];A=D=pc=cyc=0;lw=-1;draw()}
+function stop(){clearInterval(timer);timer=null}
+function say(m,e){$('st').textContent=m;$('st').className=e?'er':''}
+function load(){
+ try{const t=translate(split($('src').value)),text=t.join('\n');P=assemble(t);$('asm').textContent=text;
+  init=PRE[$('pre').value]&&PRE[$('pre').value].c===$('src').value?PRE[$('pre').value].i:init;reset();say('Loaded: '+P.rom.length+' instructions.')}
+ catch(e){P=null;say(e.message,1);draw()}}
+function draw(){
+ const R=[['PC',pc],['A',A],['D',D],['Cycles',cyc],['SP',ram[0]],['LCL',ram[1]],['ARG',ram[2]],['THIS',ram[3]],['THAT',ram[4]]];
+ $('reg').innerHTML=R.map(([k,v])=>`<div><small>${k}</small><b>${k=='PC'||k=='Cycles'?v:s16(v&65535)}</b></div>`).join('');
+ if(P){let h='';for(let k=Math.max(0,pc-8);k<Math.min(P.rom.length,pc+16);k++)h+=`<div class="${k==pc?'c':''}"><span class="a">${k}</span><span>${P.ins[k]}</span><span class="v">${k==pc?P.vm[k]:''}</span></div>`;$('rom').innerHTML=h;
+  if(halted())say(pc===P.end?'Finished: program reached its end (__END).':'Finished.')}
+ else $('rom').innerHTML='';
+ const sp=ram[0];let h='';for(let a=Math.min(sp,32767)-1;a>=Math.max(256,sp-30);a--)h+=`<div class="${a==lw?'w':''}"><span class="a">${a}</span><span>${s16(ram[a])}</span></div>`;
+ $('stk').innerHTML=(sp>256?`<div><span class="a">SP→${sp}</span></div>`:'<div class="a">(empty)</div>')+h;
+ h='';for(let a=base;a<base+24&&a<32768;a++)h+=`<div class="e ${a==lw?'w':''}" data-a="${a}"><span class="a">${a}</span><span>${s16(ram[a])}</span></div>`;$('ram').innerHTML=h}
+$('ram').onclick=e=>{const d=e.target.closest('[data-a]');if(!d)return;const a=+d.dataset.a,v=prompt('New value for RAM['+a+']',s16(ram[a]));if(v!==null&&v.trim()!==''&&!isNaN(+v)){ram[a]=+v&65535;init[a]=ram[a];draw()}};
+$('rb').innerHTML='<input id="ba" type="number" value="256" min="0" max="32767" style="width:80px">'+[['0',0],['16',16],['256',256],['LCL',1],['ARG',2],['THIS',3],['THAT',4]].map(([k,v])=>`<button data-v="${v}" data-p="${k.length>3||isNaN(k)?1:0}">${k}</button>`).join('');
+$('rb').onclick=e=>{const b=e.target.closest('button');if(!b)return;base=b.dataset.p=='1'?ram[+b.dataset.v]:+b.dataset.v;$('ba').value=base;draw()};
+$('ba').onchange=()=>{base=Math.max(0,Math.min(32767,+$('ba').value||0));draw()};
+$('pre').onchange=()=>{$('src').value=PRE[$('pre').value].c;init=PRE[$('pre').value].i;load()};
+$('f').onchange=async e=>{let t='';for(const f of e.target.files)t+=`//@file ${f.name}\n`+await f.text()+'\n';$('src').value=t;init={};load()};
+$('ld').onclick=load;$('rs').onclick=reset;$('stop').onclick=stop;
+$('sp1').onclick=()=>{if(P&&!halted()){step();draw()}};
+$('run').onclick=()=>{if(timer||!P)return;timer=setInterval(()=>{const n=[1,10,50,300,3000][$('spd').value];for(let i=0;i<n&&!halted();i++)step();draw();if(halted())stop()},50)};
+$('pre').onchange();
+</script></body></html>
