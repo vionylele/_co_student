@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Jack VM Simulator</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f7f7f3;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--bd:#d6d6cd;--acc:#2f6fed;--hi:#fff1b0;--wr:#cfeecf;--err:#c0392b;--scr:#fff}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--fg:#ecece8;--mut:#9a9a94;--card:#1f1f1d;--bd:#3a3a36;--acc:#6b9bff;--hi:#4d4420;--wr:#24422b;--err:#ff7b6b;--scr:#f2f2ee;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161615;--fg:#ecece8;--mut:#9a9a94;--card:#1f1f1d;--bd:#3a3a36;--acc:#6b9bff;--hi:#4d4420;--wr:#24422b;--err:#ff7b6b;--scr:#f2f2ee;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px}
+h1{font-size:17px;margin:0 0 8px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+button,select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:5px 10px;cursor:pointer}
+button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px;min-width:0}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0 0 6px}
+textarea{width:100%;height:300px;box-sizing:border-box;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);color:inherit;border:1px solid var(--bd);border-radius:6px;padding:6px;resize:vertical}
+.m{font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto}
+.m div{display:flex;gap:10px;padding:0 4px;white-space:pre}.m .a{color:var(--mut);min-width:34px}.m .c{background:var(--hi)}
+.seg{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px;font:12px ui-monospace,Menlo,Consolas,monospace}
+.seg b{font:600 11px system-ui;color:var(--mut);min-width:64px;align-self:center}
+.seg span{background:var(--bg);border:1px solid var(--bd);border-radius:4px;padding:0 5px}
+canvas{width:100%;image-rendering:pixelated;background:var(--scr);border:1px solid var(--bd);border-radius:4px;display:block}
+pre{margin:6px 0 0;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:160px;overflow:auto;background:var(--bg);padding:6px;border-radius:6px;min-height:40px}
+#st{margin:8px 0 0;min-height:1.2em;color:var(--mut)}#st.er{color:var(--err)}
+</style></head><body>
+<h1>Jack VM Simulator <small style="font-weight:400;color:var(--mut)">— Jack → VM → run</small></h1>
+<div class="bar">
+<select id="pre"></select><label>or <input id="f" type="file" accept=".jack,.vm" multiple></label><button class="p" id="ld">Compile &amp; load</button><button id="s1">Step</button><button id="run">Run</button><button id="stop">Stop</button><button id="rs">Reset</button>
+<select id="spd"><option value="0">Slow</option><option value="1">Medium</option><option value="2" selected>Fast</option><option value="3">Very fast</option><option value="4">Max</option></select>
+</div>
+<div class="grid">
+<div class="card"><h2>Source (Jack classes or VM code)</h2><textarea id="src" spellcheck="false"></textarea>
+<details style="margin-top:6px"><summary>Show compiled VM code</summary><pre id="vmt"></pre></details></div>
+<div class="card"><h2>VM code <span id="fnm" style="text-transform:none"></span></h2><div class="m" id="code"></div>
+<h2 style="margin-top:10px">Call stack</h2><div class="m" id="cs"></div></div>
+<div class="card"><h2>Stack (top first)</h2><div class="m" id="stk"></div><h2 style="margin-top:10px">Segments</h2><div id="seg"></div></div>
+<div class="card"><h2>Screen <small style="text-transform:none">(click it, then use the keyboard)</small></h2><canvas id="scr" width="512" height="256" tabindex="0"></canvas><h2 style="margin-top:10px">Output</h2><pre id="out"></pre></div>
+</div>
+<p id="st"></p>
+<script>
+const $=id=>document.getElementById(id);
+const PRE={
+"Seven":"class Main {\n    function void main() {\n        do Output.printInt(1 + (2 * 3));\n        return;\n    }\n}",
+"Fibonacci":"class Main {\n    function void main() {\n        var int i;\n        let i = 0;\n        while (i < 11) {\n            do Output.printInt(Main.fib(i));\n            do Output.printChar(32);\n            let i = i + 1;\n        }\n        return;\n    }\n    function int fib(int n) {\n        if (n < 2) { return n; }\n        return Main.fib(n - 1) + Main.fib(n - 2);\n    }\n}",
+"Objects (Counter)":"class Counter {\n    static int total;\n    field int n, step;\n    constructor Counter new(int Astep) {\n        let n = 0;\n        let step = Astep;\n        return this;\n    }\n    method int bump() {\n        let n = n + step;\n        let total = total + step;\n        return n;\n    }\n    function int total() { return total; }\n}\n\nclass Main {\n    function void main() {\n        var Counter a, b;\n        let a = Counter.new(2);\n        let b = Counter.new(5);\n        do a.bump();\n        do b.bump();\n        do b.bump();\n        do Output.printString(\"a=\");\n        do Output.printInt(a.bump());\n        do Output.printString(\" b=\");\n        do Output.printInt(b.bump());\n        do Output.printString(\" total=\");\n        do Output.printInt(Counter.total());\n        return;\n    }\n}",
+"Arrays + strings":"class Main {\n    function void main() {\n        var Array a;\n        var int i, sum;\n        var String s;\n        let a = Array.new(5);\n        let i = 0;\n        while (i < 5) {\n            let a[i] = (i + 1) * 10;\n            let sum = sum + a[i];\n            let i = i + 1;\n        }\n        let s = \"sum = \";\n        do Output.printString(s);\n        do Output.printInt(sum);\n        do Output.println();\n        do Output.printInt(a[a[0] / 10]);\n        return;\n    }\n}",
+"Screen drawing":"class Main {\n    function void main() {\n        var int i;\n        do Screen.drawRectangle(20, 20, 120, 80);\n        do Screen.setColor(false);\n        do Screen.drawRectangle(40, 40, 100, 60);\n        do Screen.setColor(true);\n        do Screen.drawLine(150, 20, 300, 120);\n        do Screen.drawCircle(400, 100, 50);\n        let i = 0;\n        while (i < 10) {\n            do Screen.drawPixel(20 + (i * 8), 150);\n            let i = i + 1;\n        }\n        return;\n    }\n}",
+"Raw VM code":"function Main.main 1\npush constant 7\npush constant 8\nadd\npop local 0\npush local 0\ncall Output.printInt 1\npop temp 0\npush constant 0\nreturn"};
+for(const k in PRE)$('pre').add(new Option(k,k));
+
+// ---------------- Jack compiler (port of JackCompiler.py) ----------------
+function jack(src,fn){
+ const K=new Set('class constructor function method field static var int char boolean void true false null this let do if else while return'.split(' '));
+ const T=[],re=/\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/|(\d+)|"([^"\n]*)"|([A-Za-z_]\w*)|([{}()\[\].,;+\-*\/&|<>=~])/y;
+ let p=0,ln=1;
+ while(p<src.length){
+  if(src.startsWith('/*',p)&&src.indexOf('*/',p+2)<0)throw Error(`${fn}:${ln}: unterminated comment`);
+  re.lastIndex=p;const m=re.exec(src);
+  if(!m)throw Error(`${fn}:${ln}: ${src[p]=='"'?'unterminated string constant':'unexpected character '+src[p]}`);
+  if(m[1]!==undefined){if(+m[1]>32767)throw Error(`${fn}:${ln}: integer constant ${m[1]} is larger than 32767`);T.push({k:'n',v:+m[1],l:ln})}
+  else if(m[2]!==undefined)T.push({k:'t',v:m[2],l:ln});
+  else if(m[3]!==undefined)T.push({k:K.has(m[3])?'k':'i',v:m[3],l:ln});
+  else if(m[4]!==undefined)T.push({k:'s',v:m[4],l:ln});
+  ln+=m[0].split('\n').length-1;p=re.lastIndex}
+ T.push({k:'e',v:'<end of file>',l:ln});
+ let i=0,out=[],cls,cs=Object.create(null),ss,cnt={static:0,field:0,arg:0,var:0},sk,rv,ifn,wn;
+ const tk=()=>T[i],err=(m,t=tk())=>{throw Error(`${fn}:${t.l}: ${m}`)},nx=()=>T[i++];
+ const is=v=>(tk().k=='s'||tk().k=='k')&&tk().v===v,E=(...a)=>out.push(...a);
+ const ex=v=>{if(!is(v))err(`expected '${v}' but found '${tk().v}'`);return nx()};
+ const id=()=>{if(tk().k!='i')err(`expected identifier but found '${tk().v}'`);return nx().v};
+ const ty=vd=>{const t=tk();if(t.k=='k'&&(['int','char','boolean'].includes(t.v)||vd&&t.v=='void')||t.k=='i')return nx().v;err('expected a type but found \''+t.v+'\'')};
+ const def=(n,t,k,tok)=>{const tb=k=='static'||k=='field'?cs:ss;if(n in tb)err(`'${n}' is already declared in this scope`,tok);tb[n]=[t,k,cnt[k]++]};
+ const look=(n,tok)=>{const s=ss[n]||cs[n];if(s&&s[1]=='field'&&sk=='function')err(`field '${n}' cannot be used in a function`,tok);return s};
+ const SEG={static:'static',field:'this',arg:'argument',var:'local'},OPS={'+':'add','-':'sub','*':'call Math.multiply 2','/':'call Math.divide 2','&':'and','|':'or','<':'lt','>':'gt','=':'eq'};
+ const pv=(n,t)=>{const s=look(n,t);if(!s)err(`undefined variable '${n}'`,t);E(`push ${SEG[s[1]]} ${s[2]}`)};
+ function list(){let n=0;if(!is(')'))for(;;){expr();n++;if(!is(','))break;nx()}return n}
+ function call(n,t){let c,x,s;
+  if(is('.')){nx();s=id();const y=look(n,t);if(y){E(`push ${SEG[y[1]]} ${y[2]}`);c=y[0];x=1}else{c=n;x=0}}
+  else{if(sk=='function')err(`cannot call method '${n}' without an object inside a function`,t);s=n;c=cls;x=1;E('push pointer 0')}
+  ex('(');const k=list();ex(')');E(`call ${c}.${s} ${k+x}`)}
+ function term(){const t=tk();
+  if(t.k=='n'){nx();E(`push constant ${t.v}`)}
+  else if(t.k=='t'){nx();E(`push constant ${t.v.length}`,'call String.new 1');for(const ch of t.v)E(`push constant ${ch.charCodeAt(0)}`,'call String.appendChar 2')}
+  else if(t.k=='k'&&['true','false','null','this'].includes(t.v)){nx();
+   if(t.v=='true')E('push constant 0','not');else if(t.v=='this'){if(sk=='function')err("'this' cannot be used in a function",t);E('push pointer 0')}else E('push constant 0')}
+  else if(is('(')){nx();expr();ex(')')}
+  else if(t.k=='s'&&(t.v=='-'||t.v=='~')){nx();term();E(t.v=='-'?'neg':'not')}
+  else if(t.k=='i'){nx();
+   if(is('[')){nx();pv(t.v,t);expr();ex(']');E('add','pop pointer 1','push that 0')}
+   else if(is('(')||is('.'))call(t.v,t);else pv(t.v,t)}
+  else err(`expected an expression but found '${t.v}'`)}
+ function expr(){term();while(tk().k=='s'&&OPS[tk().v]){const o=nx().v;term();E(OPS[o])}}
+ function stmts(){while(tk().k=='k'&&['let','if','while','do','return'].includes(tk().v)){const w=nx().v;
+  if(w=='let'){const t=tk(),n=id(),s=look(n,t);if(!s)err(`undefined variable '${n}'`,t);const a=is('[');
+   if(a){nx();E(`push ${SEG[s[1]]} ${s[2]}`);expr();ex(']');E('add')}
+   ex('=');expr();ex(';');a?E('pop temp 0','pop pointer 1','push temp 0','pop that 0'):E(`pop ${SEG[s[1]]} ${s[2]}`)}
+  else if(w=='if'){const n=ifn++;ex('(');expr();ex(')');E(`if-goto IF_TRUE${n}`,`goto IF_FALSE${n}`,`label IF_TRUE${n}`);ex('{');stmts();ex('}');
+   if(is('else')){nx();E(`goto IF_END${n}`,`label IF_FALSE${n}`);ex('{');stmts();ex('}');E(`label IF_END${n}`)}else E(`label IF_FALSE${n}`)}
+  else if(w=='while'){const n=wn++;E(`label WHILE_EXP${n}`);ex('(');expr();ex(')');E('not',`if-goto WHILE_END${n}`);ex('{');stmts();ex('}');E(`goto WHILE_EXP${n}`,`label WHILE_END${n}`)}
+  else if(w=='do'){const t=tk(),n=id();call(n,t);ex(';');E('pop temp 0')}
+  else{const t=T[i-1];if(is(';')){if(!rv)err('a non-void subroutine must return a value',t);E('push constant 0')}else{if(rv)err('a void subroutine cannot return a value',t);expr()}ex(';');E('return')}}}
+ ex('class');cls=id();ex('{');
+ while(is('static')||is('field')){const k=nx().v,t=ty();for(;;){const tok=tk();def(id(),t,k,tok);if(!is(','))break;nx()}ex(';')}
+ while(tk().k=='k'&&['constructor','function','method'].includes(tk().v)){
+  sk=nx().v;rv=is('void');ty(1);const name=id();ss=Object.create(null);cnt.arg=cnt.var=0;ifn=wn=0;
+  if(sk=='method')def('this',cls,'arg',tk());
+  ex('(');if(!is(')'))for(;;){const t=ty(),tok=tk();def(id(),t,'arg',tok);if(!is(','))break;nx()}ex(')');ex('{');
+  while(is('var')){nx();const t=ty();for(;;){const tok=tk();def(id(),t,'var',tok);if(!is(','))break;nx()}ex(';')}
+  E(`function ${cls}.${name} ${cnt.var}`);
+  if(sk=='constructor')E(`push constant ${cnt.field}`,'call Memory.alloc 1','pop pointer 0');else if(sk=='method')E('push argument 0','pop pointer 0');
+  stmts();ex('}')}
+ ex('}');if(tk().k!='e')err(`unexpected '${tk().v}' after end of class`);
+ return out}
+
+// ---------------- VM simulator with built-in OS ----------------
+let S=null,timer=null,color=1,key=0;
+const cv=$('scr'),cx=cv.getContext('2d');
+const rect=(x1,y1,x2,y2)=>{cx.fillStyle=color?'#111':'#fff';cx.fillRect(x1,y1,x2-x1+1,y2-y1+1)};
+const px=(x,y)=>rect(x,y,x,y);
+const W=n=>(n<<16)>>16;
+function alloc(n){const a=S.hp;S.hp+=Math.max(n,1);return a}
+const NAT={
+'Math.multiply':(x,y)=>x*y,'Math.divide':(x,y)=>{if(!y)throw Error('Math.divide: division by zero');return Math.trunc(x/y)},
+'Math.abs':Math.abs,'Math.min':Math.min,'Math.max':Math.max,'Math.sqrt':x=>Math.floor(Math.sqrt(x)),
+'Memory.alloc':alloc,'Memory.deAlloc':()=>0,'Memory.peek':a=>S.ram[a],'Memory.poke':(a,v)=>{S.ram[a]=v},
+'Array.new':alloc,'Array.dispose':()=>0,
+'String.new':()=>{const p=alloc(2);S.str[p]=[];return p},
+'String.appendChar':(s,c)=>{S.str[s].push(c);return s},'String.length':s=>S.str[s].length,'String.charAt':(s,i)=>S.str[s][i],
+'String.setCharAt':(s,i,c)=>{S.str[s][i]=c},'String.eraseLastChar':s=>{S.str[s].pop()},
+'String.intValue':s=>parseInt(String.fromCharCode(...S.str[s]))||0,'String.setInt':(s,n)=>{S.str[s]=[...String(n)].map(c=>c.charCodeAt(0))},
+'String.backSpace':()=>129,'String.doubleQuote':()=>34,'String.newLine':()=>128,'String.dispose':()=>0,
+'Output.printString':s=>{S.out+=String.fromCharCode(...S.str[s])},'Output.printInt':n=>{S.out+=n},'Output.printChar':c=>{S.out+=String.fromCharCode(c)},
+'Output.println':()=>{S.out+='\n'},'Output.backSpace':()=>{S.out=S.out.slice(0,-1)},'Output.moveCursor':()=>0,
+'Keyboard.keyPressed':()=>key,
+'Keyboard.readInt':s=>{S.out+=String.fromCharCode(...S.str[s]);const v=parseInt(prompt(String.fromCharCode(...S.str[s]))||'0')||0;S.out+=v+'\n';return v},
+'Screen.setColor':b=>{color=b?1:0},'Screen.drawPixel':px,'Screen.clearScreen':()=>{cx.fillStyle='#fff';cx.fillRect(0,0,512,256)},
+'Screen.drawRectangle':rect,
+'Screen.drawLine':(x1,y1,x2,y2)=>{const n=Math.max(Math.abs(x2-x1),Math.abs(y2-y1))||1;for(let t=0;t<=n;t++)px(Math.round(x1+(x2-x1)*t/n),Math.round(y1+(y2-y1)*t/n))},
+'Screen.drawCircle':(x,y,r)=>{for(let d=-r;d<=r;d++){const h=Math.floor(Math.sqrt(r*r-d*d));rect(x-h,y+d,x+h,y+d)}},
+'Sys.wait':()=>0,'Sys.halt':()=>{S.done='Sys.halt called'},'Sys.error':n=>{throw Error('Sys.error '+n)}};
+
+function parseVM(texts){
+ const f={};let fn;
+ for(const t of texts)t.split(/\r?\n/).forEach((raw,k)=>{const a=raw.split('//')[0].trim().split(/\s+/);if(!a[0])return;
+  if(a[0]=='function')f[a[1]]=fn={name:a[1],nv:+a[2],code:[],lab:{},lines:[]};
+  else if(!fn)throw Error(`VM line ${k+1}: command outside a function`);
+  else if(a[0]=='label')fn.lab[a[1]]=fn.code.length;
+  else{fn.code.push(a);fn.lines.push(a.join(' '))}});
+ return f}
+function push(v){S.ram[S.ram[0]++]=v}
+function pop(){return S.ram[--S.ram[0]]}
+function call(name,n){
+ if(S.f[name]){S.fr.push({fn:S.fn,pc:S.pc,na:S.na});const b=S.ram[0]-n;[0,S.ram[1],S.ram[2],S.ram[3],S.ram[4]].forEach(push);
+  S.ram[2]=b;S.ram[1]=S.ram[0];S.fn=S.f[name];S.pc=0;S.na=n;for(let k=0;k<S.fn.nv;k++)push(0)}
+ else if(NAT[name]){const a=[];for(let k=0;k<n;k++)a.unshift(pop());push(NAT[name](...a)|0)}
+ else throw Error('call to undefined function '+name)}
+function step(){
+ const F=S.fn;if(S.pc>=F.code.length)throw Error('fell off the end of '+F.name);
+ const I=F.code[S.pc++],o=I[0],R=S.ram,seg=(s,i)=>s=='local'?R[1]+i:s=='argument'?R[2]+i:s=='this'?R[3]+i:s=='that'?R[4]+i:s=='pointer'?3+i:5+i;
+ if(o=='push'){const i=+I[2];push(I[1]=='constant'?i:I[1]=='static'?(S.st[F.name.split('.')[0]+'.'+i]|0):R[seg(I[1],i)])}
+ else if(o=='pop'){const i=+I[2],v=pop();if(I[1]=='static')S.st[F.name.split('.')[0]+'.'+i]=v;else R[seg(I[1],i)]=v}
+ else if(['add','sub','and','or','eq','gt','lt'].includes(o)){const y=pop(),x=pop();push({add:x+y,sub:x-y,and:x&y,or:x|y,eq:-(x==y),gt:-(x>y),lt:-(x<y)}[o])}
+ else if(o=='neg')push(-pop());else if(o=='not')push(~pop());
+ else if(o=='goto')S.pc=F.lab[I[1]];else if(o=='if-goto'){if(pop())S.pc=F.lab[I[1]]}
+ else if(o=='call')call(I[1],+I[2]);
+ else if(o=='return'){const fr=R[1],r=pop();R[R[2]]=r;R[0]=R[2]+1;R[4]=R[fr-1];R[3]=R[fr-2];R[2]=R[fr-3];R[1]=R[fr-4];
+  const p=S.fr.pop();if(!p||!p.fn){S.done=S.entry+' returned';return}S.fn=p.fn;S.pc=p.pc;S.na=p.na}
+ else throw Error('unknown VM command: '+I.join(' '));
+ S.n++}
+function say(m,e){$('st').textContent=m;$('st').className=e?'er':''}
+function stop(){clearInterval(timer);timer=null}
+function boot(){
+ const t=$('src').value,vms=[];
+ if(/\bclass\s+\w+\s*\{/.test(t)){
+  for(const c of t.split(/^(?=class\s)/m).filter(s=>/class\s/.test(s)))vms.push(jack(c,(c.match(/class\s+(\w+)/)||[,'Main'])[1]+'.jack').join('\n'))}
+ else vms.push(t);
+ $('vmt').textContent=vms.join('\n\n');
+ const f=parseVM(vms),entry=f['Sys.init']?'Sys.init':'Main.main';
+ if(!f[entry])throw Error('no '+entry+' function found');
+ stop();cx.fillStyle='#fff';cx.fillRect(0,0,512,256);color=1;
+ S={f,entry,ram:new Int16Array(32768),st:{},out:'',hp:2048,str:{},fr:[],fn:null,pc:0,na:0,n:0,done:null};
+ S.ram[0]=256;call(entry,0)}
+function load(){try{boot();say('Loaded. Entry: '+S.entry);draw()}catch(e){S=null;say(e.message,1);draw()}}
+function draw(){
+ if(!S){$('code').innerHTML=$('stk').innerHTML=$('cs').innerHTML=$('seg').innerHTML=$('out').textContent='';$('fnm').textContent='';return}
+ const F=S.fn,R=S.ram,sp=R[0];
+ $('fnm').textContent=F?'— '+F.name:'';
+ let h='';for(let k=Math.max(0,S.pc-6);k<Math.min(F.lines.length,S.pc+12);k++)h+=`<div class="${k==S.pc&&!S.done?'c':''}"><span class="a">${k}</span><span>${F.lines[k]}</span></div>`;$('code').innerHTML=h;
+ h='';for(let a=sp-1;a>=Math.max(256,sp-16);a--)h+=`<div><span class="a">${a}</span><span>${R[a]}</span></div>`;$('stk').innerHTML=h||'<div class="a">(empty)</div>';
+ $('cs').innerHTML=[...S.fr.map(x=>x.fn&&x.fn.name).filter(Boolean),F.name].reverse().map((n,k)=>`<div class="${k?'':'c'}"><span>${n}</span></div>`).join('');
+ const chips=(a,n)=>Array.from({length:n},(_,k)=>`<span>${k}:${R[a+k]}</span>`).join('');
+ const cl=F.name.split('.')[0],sts=Object.keys(S.st).filter(k=>k.startsWith(cl+'.')).map(k=>`<span>${k.split('.')[1]}:${S.st[k]}</span>`).join('');
+ $('seg').innerHTML=`<div class="seg"><b>local</b>${chips(R[1],F.nv)}</div><div class="seg"><b>argument</b>${chips(R[2],S.na)}</div>`+
+  `<div class="seg"><b>this</b>${R[3]>=2048?chips(R[3],6):''}</div><div class="seg"><b>that</b>${R[4]>=2048?chips(R[4],6):''}</div>`+
+  `<div class="seg"><b>pointer</b>${chips(3,2)}</div><div class="seg"><b>temp</b>${chips(5,8)}</div><div class="seg"><b>static ${cl}</b>${sts}</div>`;
+ $('out').textContent=S.out;
+ say(S.done?'Finished: '+S.done+` (${S.n} VM commands)`:`Running — ${S.n} VM commands, SP=${sp}`)}
+function tick(n){try{for(let k=0;k<n&&!S.done;k++)step()}catch(e){S.done='error';say(e.message,1);stop();$('out').textContent=S.out;return}draw();if(S.done)stop()}
+$('ld').onclick=load;$('s1').onclick=()=>S&&!S.done&&tick(1);$('rs').onclick=load;$('stop').onclick=stop;
+$('run').onclick=()=>{if(timer||!S||S.done)return;timer=setInterval(()=>tick([1,10,100,2000,20000][$('spd').value]),40)};
+$('pre').onchange=()=>{$('src').value=PRE[$('pre').value];load()};
+$('f').onchange=async e=>{let t='';for(const f of e.target.files)t+=await f.text()+'\n';if(t){$('src').value=t;load()}e.target.value=''};
+const KM={ArrowLeft:130,ArrowUp:131,ArrowRight:132,ArrowDown:133,Enter:128,Backspace:129,Escape:140};
+addEventListener('keydown',e=>{if(e.target.tagName=='TEXTAREA')return;const c=KM[e.key]||(e.key.length==1?e.key.toUpperCase().charCodeAt(0):0);if(c){key=c;if(KM[e.key]||e.key==' ')e.preventDefault()}});
+addEventListener('keyup',()=>{key=0});
+$('pre').onchange();
+</script></body></html>
